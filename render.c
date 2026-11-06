@@ -52,7 +52,6 @@ typedef struct {
     uint32_t* tile_triangle_indices;
     uint32_t tile_triangle_capacity;
     uint32_t* local_counts; // thread_count * tile_count: per-thread counts (avoids one atomic per triangle)
-    atomic_uint_fast32_t extra_count; // extra slots (2nd triangle produced by clipping) used this frame
     uint32_t* thread_valid; // per-thread number of visible triangles written by vertex_shader
     uint32_t* scan_partial; // per-thread partial sum (parallel prefix sum)
 
@@ -71,8 +70,8 @@ RenderStates states;
 /* ---------- barriers (pthread_barrier_t does not exist on macOS) ---------- */
 
 typedef struct {
-    atomic_uint count;
-    atomic_uint generation;
+    atomic_uint_fast32_t count;
+    atomic_uint_fast32_t generation;
 } Barrier;
 
 static Barrier worker_barrier; // worker threads only
@@ -89,7 +88,7 @@ static void barrier_wait(Barrier* b, uint32_t n) {
     }
 }
 
-void barrier(void) {
+static inline void barrier(void) {
     barrier_wait(&worker_barrier, states.thread_count);
 }
 
@@ -193,7 +192,7 @@ void init(uint32_t width, uint32_t height, uint32_t triangle_count) {
     states.zbuffer = malloc(sizeof(float) * width * height);
 
     states.triangle_count = triangle_count;
-    states.transformed_triangles = malloc(sizeof(TransformedTriangle) * 2 * triangle_count);
+    states.transformed_triangles = malloc(sizeof(TransformedTriangle) * triangle_count);
 
     states.tile_rows = ceil_uint(height, TILE_SIZE);
     states.tile_cols = ceil_uint(width, TILE_SIZE);
@@ -293,13 +292,12 @@ void clear_buffers(uint32_t t_id) {
     end = min_uint(start + batch_size, pixels);
 
     for (uint32_t i = start; i < end; i++){
-        states.framebuffer[i] = 0;
+        states.framebuffer[i] = 0xff000000u;
         states.zbuffer[i] = FLT_MAX;
     }
 
     if (t_id == 0) {
         atomic_store(&states.current_tile, 0);
-        atomic_store(&states.extra_count, 0);
     }
 }
 
@@ -384,11 +382,6 @@ static inline uint32_t outcode(vec4 c) {
            ((c.z < -c.w) << 4) | ((c.z > c.w) << 5);
 }
 
-static inline vec4 lerp_vec4(vec4 a, vec4 b, float t) {
-    return (vec4){a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
-                  a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t};
-}
-
 // Static block of items [start, end) that thread t_id handles out of n.
 static inline void thread_block(uint32_t n, uint32_t t_id, uint32_t* start, uint32_t* end) {
     uint32_t batch_size = ceil_uint(n, states.thread_count);
@@ -396,11 +389,7 @@ static inline void thread_block(uint32_t n, uint32_t t_id, uint32_t* start, uint
     *end = min_uint(*start + batch_size, n);
 }
 
-// Visible triangles are written compactly (no gaps), so no slot ever holds stale data:
-//  - thread t_id writes into [start, start + thread_valid[t_id]) of its own block;
-//  - the 2nd triangle produced by near-plane clipping (rare) goes to an extra slot in
-//    [n, n + extra_count).
-// binning() visits exactly these slots.
+// Visible triangles are written compactly (no gaps) in each thread's own block.
 void vertex_shader(uint32_t t_id) {
     uint32_t n = states.triangle_count;
     uint32_t* local = states.local_counts + (size_t)t_id * states.tile_count;
@@ -416,33 +405,14 @@ void vertex_shader(uint32_t t_id) {
         if (outcode(in[0]) & outcode(in[1]) & outcode(in[2]))
             continue;
 
-        // Sutherland-Hodgman against the near plane (z + w >= 0)
-        vec4 poly[4];
-        uint32_t count = 0;
-        for (int a = 0; a < 3; a++){
-            vec4 p = in[a], q = in[(a + 1) % 3];
-            float dp = p.z + p.w, dq = q.z + q.w;
-            if (dp >= 0.0f)
-                poly[count++] = p;
-            if ((dp >= 0.0f) != (dq >= 0.0f))
-                poly[count++] = lerp_vec4(p, q, dp / (dp - dq));
-        }
+        // Without near-plane clipping, discard triangles that cross the plane or cannot be projected.
+        if ((outcode(in[0]) | outcode(in[1]) | outcode(in[2])) & (1u << 4) ||
+            in[0].w <= 1e-6f || in[1].w <= 1e-6f || in[2].w <= 1e-6f)
+            continue;
 
-        // triangle fan over the clipped polygon (0, 1 or 2 triangles)
-        uint32_t tris = count >= 3 ? count - 2 : 0;
-        for (uint32_t k = 0; k < tris; k++){
-            if (poly[0].w <= 1e-6f || poly[k + 1].w <= 1e-6f || poly[k + 2].w <= 1e-6f)
-                continue;
-
-            TransformedTriangle out;
-            if (!setup_triangle(&out, project_vec(poly[0]), project_vec(poly[k + 1]),
-                                project_vec(poly[k + 2]), t.color))
-                continue;
-
-            uint32_t slot = k == 0 ? start + valid++
-                                   : n + atomic_fetch_add_explicit(&states.extra_count, 1, memory_order_relaxed);
-            store_triangle(slot, local, &out);
-        }
+        TransformedTriangle out;
+        if (setup_triangle(&out, project_vec(in[0]), project_vec(in[1]), project_vec(in[2]), t.color))
+            store_triangle(start + valid++, local, &out);
     }
     states.thread_valid[t_id] = valid;
 
@@ -534,12 +504,6 @@ void binning(uint32_t t_id) {
     thread_block(states.triangle_count, t_id, &start, &end);
     for (uint32_t i = start; i < start + states.thread_valid[t_id]; i++)
         bin_slot(i);
-
-    // extra slots from clipping
-    uint32_t extra = (uint32_t)atomic_load(&states.extra_count);
-    thread_block(extra, t_id, &start, &end);
-    for (uint32_t i = start; i < end; i++)
-        bin_slot(states.triangle_count + i);
 }
 
 // Fixed-point rasterization (8 subpixel bits): edge functions are exact, so neighboring
@@ -622,8 +586,7 @@ static inline void rasterize_triangle(TransformedTriangle t, uint32_t min_x, uin
     }
 }
 
-void rasterize(uint32_t t_id) {
-    (void)t_id;
+void rasterize() {
     uint32_t tile_count = states.tile_count;
     while (1) {
         uint32_t tile_idx = atomic_fetch_add_explicit(&states.current_tile, 1, memory_order_relaxed);
@@ -660,7 +623,7 @@ void* pipeline(void* arg) {
         barrier();
         binning(t_id);
         barrier();
-        rasterize(t_id);
+        rasterize();
 
         barrier_wait(&frame_barrier, states.thread_count + 1); // end of frame
     }

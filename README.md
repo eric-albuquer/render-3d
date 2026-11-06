@@ -8,7 +8,7 @@ to a `Texture2D` and drawn once per frame.
 Features:
 
 - Perspective / translation / rotation matrix helpers (4x4, row-major)
-- Near-plane clipping (Sutherland-Hodgman), frustum culling, optional backface culling
+- Near-plane rejection, frustum culling, optional backface culling
 - Tile-based binning with a **parallel prefix sum**
 - Exact fixed-point (sub-pixel) triangle rasterization with a top-left style tie-break and a depth buffer
 - Wavefront `.obj` / `.mtl` loader (flat `Kd` colors, polygons triangulated as fans)
@@ -62,8 +62,7 @@ Open the **MSYS2 UCRT64** shell and install the toolchain and raylib:
 
 ```sh
 pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-raylib
-gcc -O3 -Wall -Wextra -o render3d.exe main.c render_raylib.c render.c render_obj.c \
-    $(pkg-config --cflags --libs raylib) -lpthread
+gcc -O3 -march=native -Wall -Wextra -o render3d.exe main.c render_raylib.c render.c render_obj.c -lraylib -lopengl32 -lgdi32 -lwinmm -lpthread && render3d.exe
 ```
 
 (Use the `mingw-w64-x86_64-*` packages instead if you work in the MINGW64 shell.) The raylib `pkg-config` file already
@@ -158,8 +157,8 @@ render()  ──►  clear_buffers ─► vertex_shader ─► binning ─► ra
 
 ### 1. `clear_buffers`
 
-Zeroes the tile offset/temp arrays, the framebuffer and the depth buffer (`FLT_MAX`), and resets the tile work queue
-and the extra-slot counter (`extra_count`). Each thread clears its own contiguous chunk.
+Zeroes the tile offset/temp arrays, the framebuffer and the depth buffer (`FLT_MAX`), and resets the tile work queue.
+Each thread clears its own contiguous chunk.
 
 ### 2. `vertex_shader`
 
@@ -168,8 +167,8 @@ Per triangle (each thread handles a contiguous block of the mesh):
 1. `transform_vec` multiplies each vertex by `states.matrix` (row-major 4x4) giving clip-space `vec4`.
 2. **Frustum culling**: a 6-bit *outcode* per vertex records which frustum planes (`-w <= x,y,z <= w`) it violates. If
    the AND of the three outcodes is non-zero, all three vertices are outside the same plane and the triangle is dropped.
-3. **Near-plane clipping**: Sutherland-Hodgman against `z + w >= 0`. A triangle becomes 0, 1 or 2 triangles (a clipped
-   quad is split as a fan). This is what makes geometry crossing the camera render correctly instead of vanishing.
+3. Triangles that cross the near plane (`z + w = 0`) or have a vertex with `w <= 1e-6` are dropped; no clipping or extra
+   triangles are generated.
 4. `project_vec` performs the perspective divide and the viewport transform → pixel `x/y` and NDC `z`.
 5. `setup_triangle` builds the `TransformedTriangle` and its pixel-space bounding box (clamped to the screen). It
    returns `false` — and the triangle is simply dropped — if `is_visible` rejects it (non-finite or degenerate, entirely
@@ -304,10 +303,6 @@ scatter. The third barrier is required because the scatter modifies `temp`, whic
   `thread_valid[t]`. Binning of that thread visits only `[start, start + thread_valid[t])`, so it never reads a slot that
   was not written this frame. Culled triangles cost nothing — no write, and no "empty" marker to store or test — and
   binning does not iterate over invisible triangles at all.
-- **Overflow slots for clipping.** A triangle clipped against the near plane may become two triangles, but that is rare.
-  The first goes into the thread's block; the second goes into a separate "extra" area after the first
-  `triangle_count` slots, claimed with an atomic counter *only after* the triangle has been validated (so the area has no
-  holes either). Binning visits `[0, extra_count)` of that area, split evenly between threads.
 - **Fixed-point rasterization.** Integer edge functions are exact and cheap to step incrementally (two additions per
   pixel per edge) and avoid the float accumulation errors that cause cracks between triangles.
 - **Relaxed atomics where ordering is provided by barriers.** Counter updates inside a stage use

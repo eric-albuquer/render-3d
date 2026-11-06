@@ -1,12 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <raylib.h>
+#include "raylib.h"
 #include "render_raylib.h"
 
 #define W 1440
-#define H 1080
+#define H 960
 
-#define BRIDGE_DIR "/Users/ega/Downloads/Historic Boardman Bridge (1888)"
+#define BRIDGE_DIR "Historic Boardman Bridge (1888)"
 
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : BRIDGE_DIR;
@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
         mat4_mul(mvp, proj, mv); // MVP = P * V * M (updated before render(), while no worker is running)
 
         BeginDrawing();
-        ClearBackground(BLACK);
+        //ClearBackground(BLACK);
         rr_render_and_draw();
         DrawFPS(10, 10);
         EndDrawing();

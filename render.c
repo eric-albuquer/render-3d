@@ -15,7 +15,7 @@
 
 #include "render.h"
 
-#define TILE_SHIFT 5
+#define TILE_SHIFT 4
 #define TILE_SIZE (1u << TILE_SHIFT)
 #define TILE_MASK (TILE_SIZE - 1u)
 
@@ -88,7 +88,7 @@ static void barrier_wait(Barrier* b, uint32_t n) {
     }
 }
 
-static inline void barrier(void) {
+static inline void barrier() {
     barrier_wait(&worker_barrier, states.thread_count);
 }
 
@@ -203,7 +203,7 @@ void init(uint32_t width, uint32_t height, uint32_t triangle_count) {
     states.tile_triangle_offset_temp = malloc(sizeof(atomic_uint_fast32_t) * (tile_count + 1));
 
     // grows on demand during binning (the worst case, tile_count * triangle_count, would be huge)
-    states.tile_triangle_capacity = max_uint(triangle_count * 4, 1);
+    states.tile_triangle_capacity = max_uint(triangle_count * 2, 1);
     states.tile_triangle_indices = malloc(sizeof(uint32_t) * states.tile_triangle_capacity);
 
     states.thread_count = cpu_count();
@@ -293,7 +293,7 @@ void clear_buffers(uint32_t t_id) {
 
     for (uint32_t i = start; i < end; i++){
         states.framebuffer[i] = 0xff000000u;
-        states.zbuffer[i] = FLT_MAX;
+        states.zbuffer[i] = 1.0f;
     }
 
     if (t_id == 0) {
@@ -339,7 +339,7 @@ static inline bool is_visible(vec3 v0, vec3 v1, vec3 v2) {
 
 // Computes the pixel-space bounding box. Returns false if the triangle is not visible
 // (degenerate, behind the far plane, back-facing, or outside the screen).
-static bool setup_triangle(TransformedTriangle* out, vec3 v0, vec3 v1, vec3 v2, uint32_t color) {
+static inline bool setup_triangle(TransformedTriangle* out, vec3 v0, vec3 v1, vec3 v2, uint32_t color) {
     if (!is_visible(v0, v1, v2))
         return false;
 
@@ -361,7 +361,7 @@ static bool setup_triangle(TransformedTriangle* out, vec3 v0, vec3 v1, vec3 v2, 
 }
 
 // Stores the triangle in its slot and counts the tiles it covers in the thread-local counters.
-static void store_triangle(uint32_t slot, uint32_t* local, const TransformedTriangle* t) {
+static inline void store_triangle(uint32_t slot, uint32_t* local, const TransformedTriangle* t) {
     states.transformed_triangles[slot] = *t;
 
     uint32_t tile_x_start = t->min_x >> TILE_SHIFT;
@@ -455,7 +455,7 @@ static void tile_prefix_sum(uint32_t t_id) {
             total += states.scan_partial[i];
 
         if (total > states.tile_triangle_capacity) {
-            uint32_t cap = max_uint(total, states.tile_triangle_capacity * 4);
+            uint32_t cap = max_uint(total, states.tile_triangle_capacity * 2);
             uint32_t* p = realloc(states.tile_triangle_indices, sizeof(uint32_t) * cap);
             if (!p) {
                 perror("realloc tile_triangle_indices");
@@ -510,6 +510,7 @@ void binning(uint32_t t_id) {
 // triangles never leave gaps nor draw a shared-edge pixel twice.
 #define SUBPIXEL_BITS 8
 #define SUBPIXEL_ONE (1 << SUBPIXEL_BITS)
+#define HALF_SUBPIXE_ONE (SUBPIXEL_ONE >> 1)
 #define COORD_LIMIT 1000000.0f
 
 typedef struct { int64_t x, y; } ivec2;
@@ -561,8 +562,8 @@ static inline void rasterize_triangle(TransformedTriangle t, uint32_t min_x, uin
     int64_t a1 = (p0.y - p2.y) * SUBPIXEL_ONE, b1 = -(p0.x - p2.x) * SUBPIXEL_ONE;
     int64_t a2 = (p1.y - p0.y) * SUBPIXEL_ONE, b2 = -(p1.x - p0.x) * SUBPIXEL_ONE;
 
-    int64_t px = ((int64_t)min_x << SUBPIXEL_BITS) + SUBPIXEL_ONE / 2;
-    int64_t py = ((int64_t)min_y << SUBPIXEL_BITS) + SUBPIXEL_ONE / 2;
+    int64_t px = ((int64_t)min_x << SUBPIXEL_BITS) + HALF_SUBPIXE_ONE;
+    int64_t py = ((int64_t)min_y << SUBPIXEL_BITS) + HALF_SUBPIXE_ONE;
     int64_t row_w0 = edge_fn(p1, p2, px, py);
     int64_t row_w1 = edge_fn(p2, p0, px, py);
     int64_t row_w2 = edge_fn(p0, p1, px, py);
@@ -574,7 +575,7 @@ static inline void rasterize_triangle(TransformedTriangle t, uint32_t min_x, uin
         for (uint32_t x = min_x; x < max_x; x++){
             if ((w0 + bias0) >= 0 && (w1 + bias1) >= 0 && (w2 + bias2) >= 0) {
                 float z = ((float)w0 * z0 + (float)w1 * z1 + (float)w2 * z2) * inv_area;
-                if (z <= 1.0f && z < states.zbuffer[base + x]) { // z > 1: beyond the far plane
+                if (z < states.zbuffer[base + x]) { // z > 1: beyond the far plane
                     states.zbuffer[base + x] = z;
                     states.framebuffer[base + x] = t.color;
                 }

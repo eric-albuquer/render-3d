@@ -6,7 +6,7 @@
 #define W 1440
 #define H 960
 
-#define BRIDGE_DIR "Historic Boardman Bridge (1888)"
+#define BRIDGE_DIR "Dynamic Flight SM-11"
 
 int main(int argc, char** argv) {
     const char* dir = argc > 1 ? argv[1] : BRIDGE_DIR;
@@ -21,11 +21,11 @@ int main(int argc, char** argv) {
     triangles_normalize(model_tris, count, 1.0f); // fits in [-1, 1]
 
     rr_init(W, H, count, "render3d");
-    SetTargetFPS(60);
+    SetTargetFPS(180);
 
     float proj[16], view[16], rx[16], rz[16], model[16], mv[16], mvp[16];
     mat4_perspective(proj, 60.0f * 3.14159265f / 180.0f, (float)W / H, 0.1f, 100.0f);
-    mat4_translation(view, 0, 0.5, -2.1f); // camera looks down -Z
+    mat4_translation(view, 0, 0.2, -2.1f); // camera looks down -Z
     mat4_rotation_x(rx, -1.0f);          // tilt to look from above
 
     set_triangles(model_tris);

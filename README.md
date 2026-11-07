@@ -258,9 +258,9 @@ full synchronization point, so everything written before it is visible after it,
 
 ### Tiles and why rasterization needs no locks
 
-The screen is divided into `32 x 32` tiles (`TILE_SIZE = 1 << TILE_SHIFT`). A tile is owned by exactly one thread at a
+The screen is divided into `16 x 16` tiles (`TILE_SIZE = 1 << TILE_SHIFT`). A tile is owned by exactly one thread at a
 time, so the framebuffer and the depth buffer are written **without atomics or locks** and the depth test is a plain
-compare. A tile's color (32*32*4 = 4 KiB) and depth (4 KiB) data fit comfortably in the L1 cache, so overdraw inside a
+compare. A tile's color (16*16*4 = 1 KiB) and depth (1 KiB) data fit comfortably in the L1 cache, so overdraw inside a
 tile is cheap even for models with many overlapping triangles.
 
 Because `TILE_SIZE` is a power of two, tile arithmetic uses bit operations instead of division/multiplication:

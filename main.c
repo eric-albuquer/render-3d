@@ -7,10 +7,10 @@
 #define W 1440
 #define H 960
 
-#define BRIDGE_DIR "Dynamic Flight SM-11"
+#define DIR "models/Chinese Junk"
 
 int main(int argc, char** argv) {
-    const char* dir = argc > 1 ? argv[1] : BRIDGE_DIR;
+    const char* dir = argc > 1 ? argv[1] : DIR;
 
     Triangle* model_tris;
     uint32_t count = load_obj_folder(dir, &model_tris);

@@ -220,6 +220,8 @@ void init(uint32_t width, uint32_t height, uint32_t triangle_count) {
 
     atomic_store(&states.running, true);
 
+    atomic_store(&states.cull_backface, true);
+
     for (uint32_t i = 0; i < states.thread_count; i++){
         states.thread_ids[i] = i;
         pthread_create(&states.threads[i], NULL, pipeline, &states.thread_ids[i]);
@@ -324,7 +326,7 @@ static inline vec3 project_vec(vec4 c) {
 
 // Triangles entirely beyond the far plane, or degenerate, are discarded.
 // (partial far-plane overlap is handled per pixel in the rasterizer)
-static inline bool is_visible(vec3 v0, vec3 v1, vec3 v2) {
+static inline bool is_visible(vec3 v0, vec3 v1, vec3 v2, bool backface_culling) {
     if (!isfinite(v0.x + v0.y + v0.z + v1.x + v1.y + v1.z + v2.x + v2.y + v2.z))
         return false;
     if (v0.z > 1.0f && v1.z > 1.0f && v2.z > 1.0f)
@@ -332,15 +334,15 @@ static inline bool is_visible(vec3 v0, vec3 v1, vec3 v2) {
 
     float area = (v1.x - v0.x) * (v2.y - v0.y) - (v1.y - v0.y) * (v2.x - v0.x);
     // screen y points down: a camera-facing triangle (counter-clockwise in the world) => area < 0
-    if (atomic_load_explicit(&states.cull_backface, memory_order_relaxed))
+    if (backface_culling)
         return area < 0.0f;
     return area != 0.0f;
 }
 
 // Computes the pixel-space bounding box. Returns false if the triangle is not visible
 // (degenerate, behind the far plane, back-facing, or outside the screen).
-static inline bool setup_triangle(TransformedTriangle* out, vec3 v0, vec3 v1, vec3 v2, uint32_t color) {
-    if (!is_visible(v0, v1, v2))
+static inline bool setup_triangle(TransformedTriangle* out, vec3 v0, vec3 v1, vec3 v2, uint32_t color, bool backface_culling) {
+    if (!is_visible(v0, v1, v2, backface_culling))
         return false;
 
     float fw = (float)states.width, fh = (float)states.height;
@@ -397,21 +399,24 @@ void vertex_shader(uint32_t t_id) {
     thread_block(n, t_id, &start, &end);
     uint32_t valid = 0;
 
+    bool backface_culling = atomic_load_explicit(&states.cull_backface, memory_order_relaxed);
+
     for (uint32_t i = start; i < end; i++){
         Triangle t = states.raw_triangles[i];
         vec4 in[3] = { transform_vec(t.v0), transform_vec(t.v1), transform_vec(t.v2) };
+        uint32_t codes[3] = { outcode(in[0]), outcode(in[1]), outcode(in[2]) };
 
         // frustum culling: all 3 vertices outside the same plane => invisible triangle
-        if (outcode(in[0]) & outcode(in[1]) & outcode(in[2]))
+        if (codes[0] & codes[1] & codes[2])
             continue;
 
         // Without near-plane clipping, discard triangles that cross the plane or cannot be projected.
-        if ((outcode(in[0]) | outcode(in[1]) | outcode(in[2])) & (1u << 4) ||
+        if ((codes[0] | codes[1] | codes[2]) & 16u ||
             in[0].w <= 1e-6f || in[1].w <= 1e-6f || in[2].w <= 1e-6f)
             continue;
 
         TransformedTriangle out;
-        if (setup_triangle(&out, project_vec(in[0]), project_vec(in[1]), project_vec(in[2]), t.color))
+        if (setup_triangle(&out, project_vec(in[0]), project_vec(in[1]), project_vec(in[2]), t.color, backface_culling))
             store_triangle(start + valid++, local, &out);
     }
     states.thread_valid[t_id] = valid;

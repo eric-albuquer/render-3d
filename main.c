@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
     triangles_normalize(model_tris, count, 1.0f); // fits in [-1, 1]
 
     rr_init(W, H, count, "render3d");
-    SetTargetFPS(180);
+    //SetTargetFPS(180);
 
     float proj[16], view[16], rx[16], rz[16], model[16], mv[16], mvp[16];
     mat4_perspective(proj, 60.0f * 3.14159265f / 180.0f, (float)W / H, 0.1f, 100.0f);
@@ -30,7 +30,6 @@ int main(int argc, char** argv) {
 
     set_triangles(model_tris);
     set_matrix(mvp);
-    set_backface_culling(true);
 
     float angle = 0;
     while (!WindowShouldClose()) {

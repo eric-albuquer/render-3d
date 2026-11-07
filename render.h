@@ -24,10 +24,16 @@ const uint32_t* get_framebuffer(void);
 void mat4_identity(float* m);
 void mat4_mul(float* out, const float* a, const float* b);
 void mat4_perspective(float* m, float fov_y, float aspect, float z_near, float z_far);
+// Constructors: replace m with the corresponding transform.
 void mat4_translation(float* m, float x, float y, float z);
 void mat4_rotation_x(float* m, float angle);
 void mat4_rotation_y(float* m, float angle);
 void mat4_rotation_z(float* m, float angle);
+// In-place composition: post-multiply m by the corresponding transform (m = m * T).
+void mat4_translate(float* m, float x, float y, float z);
+void mat4_rotate_x(float* m, float angle);
+void mat4_rotate_y(float* m, float angle);
+void mat4_rotate_z(float* m, float angle);
 
 // Loads the first .obj in the folder (and the referenced .mtl, Kd colors). Faces with more than
 // 3 vertices become a triangle fan. Returns the count; *out_triangles must be released with free().

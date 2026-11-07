@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "raylib.h"
 #include "render_raylib.h"
 
@@ -23,10 +24,8 @@ int main(int argc, char** argv) {
     rr_init(W, H, count, "render3d");
     //SetTargetFPS(180);
 
-    float proj[16], view[16], rx[16], rz[16], model[16], mv[16], mvp[16];
+    float proj[16], mvp[16];
     mat4_perspective(proj, 60.0f * 3.14159265f / 180.0f, (float)W / H, 0.1f, 100.0f);
-    mat4_translation(view, 0, 0.2, -2.1f); // camera looks down -Z
-    mat4_rotation_x(rx, -1.0f);          // tilt to look from above
 
     set_triangles(model_tris);
     set_matrix(mvp);
@@ -35,10 +34,10 @@ int main(int argc, char** argv) {
     while (!WindowShouldClose()) {
         angle += GetFrameTime() * 0.5f;
 
-        mat4_rotation_z(rz, angle);
-        mat4_mul(model, rx, rz);
-        mat4_mul(mv, view, model);
-        mat4_mul(mvp, proj, mv); // MVP = P * V * M (updated before render(), while no worker is running)
+        memcpy(mvp, proj, sizeof(mvp));
+        mat4_translate(mvp, 0, 0.2f, -2.1f); // camera looks down -Z
+        mat4_rotate_x(mvp, -1.0f); // tilt to look from above
+        mat4_rotate_z(mvp, angle);
 
         BeginDrawing();
         //ClearBackground(BLACK);

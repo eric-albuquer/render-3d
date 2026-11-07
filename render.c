@@ -169,6 +169,43 @@ void mat4_rotation_z(float* m, float angle) {
     m[4] = s;  m[5] = c;
 }
 
+void mat4_translate(float* m, float x, float y, float z) {
+    m[3]  += m[0]  * x + m[1]  * y + m[2]  * z;
+    m[7]  += m[4]  * x + m[5]  * y + m[6]  * z;
+    m[11] += m[8]  * x + m[9]  * y + m[10] * z;
+    m[15] += m[12] * x + m[13] * y + m[14] * z;
+}
+
+void mat4_rotate_x(float* m, float angle) {
+    float c = cosf(angle), s = sinf(angle);
+    for (int row = 0; row < 4; row++) {
+        int i = row * 4;
+        float y = m[i + 1], z = m[i + 2];
+        m[i + 1] = y * c + z * s;
+        m[i + 2] = -y * s + z * c;
+    }
+}
+
+void mat4_rotate_y(float* m, float angle) {
+    float c = cosf(angle), s = sinf(angle);
+    for (int row = 0; row < 4; row++) {
+        int i = row * 4;
+        float x = m[i], z = m[i + 2];
+        m[i]     = x * c - z * s;
+        m[i + 2] = x * s + z * c;
+    }
+}
+
+void mat4_rotate_z(float* m, float angle) {
+    float c = cosf(angle), s = sinf(angle);
+    for (int row = 0; row < 4; row++) {
+        int i = row * 4;
+        float x = m[i], y = m[i + 1];
+        m[i]     = x * c + y * s;
+        m[i + 1] = -x * s + y * c;
+    }
+}
+
 /* ---------- pipeline ---------- */
 
 void* pipeline(void* arg);
